@@ -20,9 +20,9 @@ class h_swish(nn.Module):
         return x * self.sigmoid(x)
 
 
-class CoordAtt(nn.Module):
+class CoordAttn(nn.Module):
     def __init__(self, channel, reduction=32):
-        super(CoordAtt, self).__init__()
+        super(CoordAttn, self).__init__()
         inp, oup = channel, channel
         self.pool_h = nn.AdaptiveAvgPool2d((None, 1))
         self.pool_w = nn.AdaptiveAvgPool2d((1, None))

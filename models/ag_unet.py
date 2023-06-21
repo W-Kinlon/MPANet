@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 
+from models.attentions import ag
+
 
 def init_weights(net, init_type='normal', gain=0.02):
     def init_func(m):
@@ -100,43 +102,6 @@ class single_conv(nn.Module):
         return x
 
 
-class AttnGate(nn.Module):
-
-    def __init__(self, F_g, F_l, F_int):
-        super(AttnGate, self).__init__()
-        self.W_g = nn.Sequential(
-            nn.Conv2d(F_g,
-                      F_int,
-                      kernel_size=1,
-                      stride=1,
-                      padding=0,
-                      bias=True),
-            nn.BatchNorm2d(F_int))
-
-        self.W_x = nn.Sequential(
-            nn.Conv2d(F_l,
-                      F_int,
-                      kernel_size=1,
-                      stride=1,
-                      padding=0,
-                      bias=True),
-            nn.BatchNorm2d(F_int))
-
-        self.psi = nn.Sequential(
-            nn.Conv2d(F_int, 1, kernel_size=1, stride=1, padding=0, bias=True),
-            nn.BatchNorm2d(1), nn.Sigmoid())
-
-        self.relu = nn.ReLU(inplace=True)
-
-    def forward(self, g, x):
-        g1 = self.W_g(g)
-        x1 = self.W_x(x)
-        psi = self.relu(g1 + x1)
-        psi = self.psi(psi)
-
-        return x * psi
-
-
 class AgUNet(nn.Module):
     """
     in_channel: input image channels
@@ -151,9 +116,12 @@ class AgUNet(nn.Module):
                  num_classes=1,
                  channel_list=[64, 128, 256, 512, 1024],
                  checkpoint=False,
-                 attn_gate=AttnGate,
+                 attn_gate=None,
                  convTranspose=True):
         super(AgUNet, self).__init__()
+
+        if attn_gate is None:
+            attn_gate = AttnGate()
 
         self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
 
@@ -165,29 +133,29 @@ class AgUNet(nn.Module):
 
         self.Up5 = up_conv(ch_in=channel_list[4], ch_out=channel_list[3], convTranspose=convTranspose)
         self.Att5 = attn_gate(F_g=channel_list[3],
-                             F_l=channel_list[3],
-                             F_int=channel_list[2])
+                              F_l=channel_list[3],
+                              F_int=channel_list[2])
         self.Up_conv5 = conv_block(ch_in=channel_list[4],
                                    ch_out=channel_list[3])
 
         self.Up4 = up_conv(ch_in=channel_list[3], ch_out=channel_list[2], convTranspose=convTranspose)
         self.Att4 = attn_gate(F_g=channel_list[2],
-                             F_l=channel_list[2],
-                             F_int=channel_list[1])
+                              F_l=channel_list[2],
+                              F_int=channel_list[1])
         self.Up_conv4 = conv_block(ch_in=channel_list[3],
                                    ch_out=channel_list[2])
 
         self.Up3 = up_conv(ch_in=channel_list[2], ch_out=channel_list[1], convTranspose=convTranspose)
         self.Att3 = attn_gate(F_g=channel_list[1],
-                             F_l=channel_list[1],
-                             F_int=64)
+                              F_l=channel_list[1],
+                              F_int=64)
         self.Up_conv3 = conv_block(ch_in=channel_list[2],
                                    ch_out=channel_list[1])
 
         self.Up2 = up_conv(ch_in=channel_list[1], ch_out=channel_list[0], convTranspose=convTranspose)
         self.Att2 = attn_gate(F_g=channel_list[0],
-                             F_l=channel_list[0],
-                             F_int=channel_list[0] // 2)
+                              F_l=channel_list[0],
+                              F_int=channel_list[0] // 2)
         self.Up_conv2 = conv_block(ch_in=channel_list[1],
                                    ch_out=channel_list[0])
 

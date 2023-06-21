@@ -161,6 +161,6 @@ if __name__ == '__main__':
                           patch_dim=16,
                           class_num=2)
 
-    # print(sum(p.numel() for p in transunet.parameters()))
+    print(sum(p.numel() for p in transunet.parameters()))
     res = transunet(torch.randn(1, 3, 416, 416))
     print(res.shape)

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 from models.attentions.multi_path_attn import MultiPathAttn
 
 
@@ -313,25 +314,12 @@ class RSU4F(nn.Module):  # UNet04FRES(nn.Module):
         return hx1d + hxin
 
 
-class AttentionBlock(nn.Module):
-
+class AttentionGate(nn.Module):
     def __init__(self, F_g, F_l, F_int):
-        super(AttentionBlock, self).__init__()
-
-        # ag-cbam2-u2net
-        '''
-        self.front_atten = CBAM(gate_channels=F_g)
-        self.down_atten = CBAM(gate_channels=F_g)
-        '''
-        # ag-se
-        # self.front_atten = SELayer(channel=F_g)
-
-        # ag-ca
-        # self.front_atten = CoordAtt(channel=F_g)
-
+        super(AttentionGate, self).__init__()
         # ag-multi2
-        self.front_atten = MultiPathAttn(channels=F_g)
-        self.down_atten = MultiPathAttn(channels=F_g)
+        self.front_attn = MultiPathAttn(channels=F_g, reduction_ratio=32)
+        self.down_attn = MultiPathAttn(channels=F_g, reduction_ratio=16, num_paths=4)
 
         self.W_g = nn.Sequential(
             nn.Conv2d(F_g, F_int, kernel_size=1, stride=1, padding=0, bias=True),
@@ -348,8 +336,8 @@ class AttentionBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, g, x):
-        g = self.front_atten(g)
-        x = self.down_atten(x)
+        g = self.front_attn(g)
+        x = self.down_attn(x)
         g1 = self.W_g(g)
         x1 = self.W_x(x)
         psi = self.relu(g1 + x1)
@@ -358,47 +346,11 @@ class AttentionBlock(nn.Module):
         return torch.cat([x * psi, g], 1)
 
 
-# CBAM
-"""
-class AttentionBlock(nn.Module):
-    def __init__(self, input_channel, arg1, arg2):
-        super(AttentionBlock, self).__init__()
-        self.channel = input_channel * 2
-        self.attn = CBAM(gate_channels=self.channel)
-
-    def forward(self, g, x):
-        x = torch.cat([x, g], 1)
-        x = self.attn(x)
-        return x
-"""
-
-# SimAM
-"""
-class AttentionBlock(nn.Module):
-    def __init__(self, arg, arg1, arg2):
-        super(AttentionBlock, self).__init__()
-        self.model = SimAM()
-
-    def forward(self, g, x):
-        return torch.cat([x, self.model(g)], 1)
-"""
-
-
-# SELayer
-# class AttentionBlock(nn.Module):
-#     def __init__(self, channel, arg1, arg2):
-#         super(AttentionBlock, self).__init__()
-#         self.model = SELayer(channel=channel)
-#
-#     def forward(self, g, x):
-#         return torch.cat([x, self.model(g)], 1)
-
-
-##### U^2-Net ####
-class U2NET(nn.Module):
+##### MPANet ####
+class MPANet(nn.Module):
 
     def __init__(self, in_ch=3, out_ch=1):
-        super(U2NET, self).__init__()
+        super(MPANet, self).__init__()
 
         self.stage1 = RSU7(in_ch, 32, 64)
         self.pool12 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
@@ -418,10 +370,15 @@ class U2NET(nn.Module):
         self.stage6 = RSU4F(512, 256, 512)
 
         # decoder
+        self.attn5 = AttentionGate(512, 512, 256)
         self.stage5d = RSU4F(1024, 256, 512)
+        self.attn4 = AttentionGate(512, 512, 256)
         self.stage4d = RSU4(1024, 128, 256)
+        self.attn3 = AttentionGate(256, 256, 128)
         self.stage3d = RSU5(512, 64, 128)
+        self.attn2 = AttentionGate(128, 128, 64)
         self.stage2d = RSU6(256, 32, 64)
+        self.attn1 = AttentionGate(64, 64, 32)
         self.stage1d = RSU7(128, 16, 64)
 
         self.side1 = nn.Conv2d(64, out_ch, 3, padding=1)
@@ -431,117 +388,7 @@ class U2NET(nn.Module):
         self.side5 = nn.Conv2d(512, out_ch, 3, padding=1)
         self.side6 = nn.Conv2d(512, out_ch, 3, padding=1)
 
-        self.outconv = nn.Conv2d(6 * out_ch, out_ch, 1)
-
-    def forward(self, x):
-        hx = x
-
-        # stage 1
-        hx1 = self.stage1(hx)
-        hx = self.pool12(hx1)
-
-        # stage 2
-        hx2 = self.stage2(hx)
-        hx = self.pool23(hx2)
-
-        # stage 3
-        hx3 = self.stage3(hx)
-        hx = self.pool34(hx3)
-
-        # stage 4
-        hx4 = self.stage4(hx)
-        hx = self.pool45(hx4)
-
-        # stage 5
-        hx5 = self.stage5(hx)
-        hx = self.pool56(hx5)
-
-        # stage 6
-        hx6 = self.stage6(hx)
-        hx6up = _upsample_like(hx6, hx5)
-
-        # -------------------- decoder --------------------
-        hx5d = self.stage5d(torch.cat((hx6up, hx5), 1))
-        hx5dup = _upsample_like(hx5d, hx4)
-
-        hx4d = self.stage4d(torch.cat((hx5dup, hx4), 1))
-        hx4dup = _upsample_like(hx4d, hx3)
-
-        hx3d = self.stage3d(torch.cat((hx4dup, hx3), 1))
-        hx3dup = _upsample_like(hx3d, hx2)
-
-        hx2d = self.stage2d(torch.cat((hx3dup, hx2), 1))
-        hx2dup = _upsample_like(hx2d, hx1)
-
-        hx1d = self.stage1d(torch.cat((hx2dup, hx1), 1))
-
-        # side output
-        d1 = self.side1(hx1d)
-
-        d2 = self.side2(hx2d)
-        d2 = _upsample_like(d2, d1)
-
-        d3 = self.side3(hx3d)
-        d3 = _upsample_like(d3, d1)
-
-        d4 = self.side4(hx4d)
-        d4 = _upsample_like(d4, d1)
-
-        d5 = self.side5(hx5d)
-        d5 = _upsample_like(d5, d1)
-
-        d6 = self.side6(hx6)
-        d6 = _upsample_like(d6, d1)
-
-        d0 = self.outconv(torch.cat((d1, d2, d3, d4, d5, d6), 1))
-
-        return torch.sigmoid(d0), torch.sigmoid(d1), torch.sigmoid(d2), torch.sigmoid(d3), torch.sigmoid(
-            d4), torch.sigmoid(d5), torch.sigmoid(d6)
-
-
-##### AttnU2NET ####
-class AttnU2NET(nn.Module):
-
-    def __init__(self, in_ch=3, out_ch=1):
-        super(AttnU2NET, self).__init__()
-
-        self.stage1 = RSU7(in_ch, 32, 64)
-        self.pool12 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage2 = RSU6(64, 32, 128)
-        self.pool23 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage3 = RSU5(128, 64, 256)
-        self.pool34 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage4 = RSU4(256, 128, 512)
-        self.pool45 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage5 = RSU4F(512, 256, 512)
-        self.pool56 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage6 = RSU4F(512, 256, 512)
-
-        # decoder
-        self.attn5 = AttentionBlock(512, 512, 256)
-        self.stage5d = RSU4F(1024, 256, 512)
-        self.attn4 = AttentionBlock(512, 512, 256)
-        self.stage4d = RSU4(1024, 128, 256)
-        self.attn3 = AttentionBlock(256, 256, 128)
-        self.stage3d = RSU5(512, 64, 128)
-        self.attn2 = AttentionBlock(128, 128, 64)
-        self.stage2d = RSU6(256, 32, 64)
-        self.attn1 = AttentionBlock(64, 64, 32)
-        self.stage1d = RSU7(128, 16, 64)
-
-        self.side1 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side2 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side3 = nn.Conv2d(128, out_ch, 3, padding=1)
-        self.side4 = nn.Conv2d(256, out_ch, 3, padding=1)
-        self.side5 = nn.Conv2d(512, out_ch, 3, padding=1)
-        self.side6 = nn.Conv2d(512, out_ch, 3, padding=1)
-
-        self.outconv = nn.Conv2d(6 * out_ch, out_ch, 1)
+        self.outconv = nn.Conv2d(3 * out_ch, out_ch, 1)
 
     def forward(self, x):
         hx = x
@@ -594,128 +441,13 @@ class AttnU2NET(nn.Module):
         d3 = self.side3(hx3d)
         d3 = _upsample_like(d3, d1)
 
-        d4 = self.side4(hx4d)
-        d4 = _upsample_like(d4, d1)
+        d0 = self.outconv(torch.cat((d1, d2, d3), 1))
 
-        d5 = self.side5(hx5d)
-        d5 = _upsample_like(d5, d1)
-
-        d6 = self.side6(hx6)
-        d6 = _upsample_like(d6, d1)
-
-        d0 = self.outconv(torch.cat((d1, d2, d3, d4, d5, d6), 1))
-
-        return torch.sigmoid(d0), torch.sigmoid(d1), torch.sigmoid(d2), torch.sigmoid(d3), torch.sigmoid(
-            d4), torch.sigmoid(d5), torch.sigmoid(d6)
-
-
-### U^2-Net small ###
-class U2NETP(nn.Module):
-
-    def __init__(self, in_ch=3, out_ch=1):
-        super(U2NETP, self).__init__()
-
-        self.stage1 = RSU7(in_ch, 16, 64)
-        self.pool12 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage2 = RSU6(64, 16, 64)
-        self.pool23 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage3 = RSU5(64, 16, 64)
-        self.pool34 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage4 = RSU4(64, 16, 64)
-        self.pool45 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage5 = RSU4F(64, 16, 64)
-        self.pool56 = nn.MaxPool2d(2, stride=2, ceil_mode=True)
-
-        self.stage6 = RSU4F(64, 16, 64)
-
-        # decoder
-        self.stage5d = RSU4F(128, 16, 64)
-        self.stage4d = RSU4(128, 16, 64)
-        self.stage3d = RSU5(128, 16, 64)
-        self.stage2d = RSU6(128, 16, 64)
-        self.stage1d = RSU7(128, 16, 64)
-
-        self.side1 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side2 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side3 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side4 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side5 = nn.Conv2d(64, out_ch, 3, padding=1)
-        self.side6 = nn.Conv2d(64, out_ch, 3, padding=1)
-
-        self.outconv = nn.Conv2d(6 * out_ch, out_ch, 1)
-
-    def forward(self, x):
-        hx = x
-
-        # stage 1
-        hx1 = self.stage1(hx)
-        hx = self.pool12(hx1)
-
-        # stage 2
-        hx2 = self.stage2(hx)
-        hx = self.pool23(hx2)
-
-        # stage 3
-        hx3 = self.stage3(hx)
-        hx = self.pool34(hx3)
-
-        # stage 4
-        hx4 = self.stage4(hx)
-        hx = self.pool45(hx4)
-
-        # stage 5
-        hx5 = self.stage5(hx)
-        hx = self.pool56(hx5)
-
-        # stage 6
-        hx6 = self.stage6(hx)
-        hx6up = _upsample_like(hx6, hx5)
-
-        # decoder
-        hx5d = self.stage5d(torch.cat((hx6up, hx5), 1))
-        hx5dup = _upsample_like(hx5d, hx4)
-
-        hx4d = self.stage4d(torch.cat((hx5dup, hx4), 1))
-        hx4dup = _upsample_like(hx4d, hx3)
-
-        hx3d = self.stage3d(torch.cat((hx4dup, hx3), 1))
-        hx3dup = _upsample_like(hx3d, hx2)
-
-        hx2d = self.stage2d(torch.cat((hx3dup, hx2), 1))
-        hx2dup = _upsample_like(hx2d, hx1)
-
-        hx1d = self.stage1d(torch.cat((hx2dup, hx1), 1))
-
-        # side output
-        d1 = self.side1(hx1d)
-
-        d2 = self.side2(hx2d)
-        d2 = _upsample_like(d2, d1)
-
-        d3 = self.side3(hx3d)
-        d3 = _upsample_like(d3, d1)
-
-        d4 = self.side4(hx4d)
-        d4 = _upsample_like(d4, d1)
-
-        d5 = self.side5(hx5d)
-        d5 = _upsample_like(d5, d1)
-
-        d6 = self.side6(hx6)
-        d6 = _upsample_like(d6, d1)
-
-        d0 = self.outconv(torch.cat((d1, d2, d3, d4, d5, d6), 1))
-
-        return torch.sigmoid(d0), torch.sigmoid(d1), torch.sigmoid(d2), torch.sigmoid(d3), torch.sigmoid(
-            d4), torch.sigmoid(d5), torch.sigmoid(d6)
+        return torch.sigmoid(d0), torch.sigmoid(d1), torch.sigmoid(d2), torch.sigmoid(d3)
 
 
 if __name__ == '__main__':
-    m = U2NET(3, 2)
+    m = MPANet(3, 2)
     x = torch.randn(1, 3, 416, 416)
     y = m(x)
     print(y[0].shape)
