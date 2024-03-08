@@ -4,8 +4,6 @@ import numpy as np
 import torch
 from scipy.spatial.distance import directed_hausdorff
 
-# Model tag when training
-global_tag = 'ag_mutil2_u2net'
 
 
 def param_get(path):

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.nn import init
 
-from models.attentions import ag
+from models.attentions.AttentionGate import AttentionGate
 
 
 def init_weights(net, init_type='normal', gain=0.02):
@@ -121,7 +121,7 @@ class AgUNet(nn.Module):
         super(AgUNet, self).__init__()
 
         if attn_gate is None:
-            attn_gate = AttnGate()
+            attn_gate = AttentionGate()
 
         self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
 

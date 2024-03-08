@@ -10,14 +10,6 @@ from eval import global_tag
 
 
 def draw_mask(tag, mask_path):
-    """Example:
-     root = '../self'
-    for index, image_name in enumerate(os.listdir(root)):
-        if image_name.__contains__('jpg'):
-            continue
-        draw_mask(image_name.replace('.png', ''), f'{root}/{image_name}')
-
-    """
     mask = cv2.imread(mask_path, 0)
     x, y = mask.shape
     img = np.zeros([x, y, 3]).astype(np.int32)
@@ -51,8 +43,8 @@ def draw_single():
 
 
 def draw_mutils():
-    tags = [global_tag, 'ag_cbam_second_u2net']
-    labels = [global_tag, 'ag_cbam_u2net', 'U2net_adam', 'attn_u2net']
+    tags = []
+    labels = []
     colors = ['orange', 'blue', 'black', 'red']
     train_loss, hausdorff, dice_loss, f1_score = [], [], [], []
     for i, tag in enumerate(tags):
@@ -69,11 +61,7 @@ def draw_mutils():
 
 
 def script():
-    tags = [global_tag, 'ag_cbam_second_u2net', 'ag_cbam_u2net', 'ag_se_u2net',
-            'se_u2net_middle', 'simam_u2net_middle'
-        , 'cbam_u2net_middle', 'cbam_u2net_second', 'cbam_u2net_after',
-            'attn2_u2net', 'attn_u2net', 'U2net_adam',
-            'Unet_adam', 'transUnet_adam', 'attentionUnet_adam']
+    tags = []
 
     df_data = {
         'tag': [],

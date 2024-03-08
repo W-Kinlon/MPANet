@@ -107,7 +107,7 @@ def randon_crop(image, size=50):
 class MeterDataset(Dataset):
 
     def __init__(self, root=None, mode='train'):
-        roots = ['../ReadMeter-paddle/data20220418', r'D:\Downloads\meter_seg']
+        roots = []
         if root == None:
             root = roots[0]
         super(MeterDataset, self).__init__()
